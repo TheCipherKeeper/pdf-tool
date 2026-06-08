@@ -1,0 +1,6 @@
+pypdf
+pikepdf
+PyMuPDF
+Pillow
+rich
+typer
