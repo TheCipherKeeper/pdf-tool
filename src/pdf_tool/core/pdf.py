@@ -253,7 +253,8 @@ def text_with_ocr_fallback(
     path: Path,
     selected: Optional[list[int]],
     *,
-    lang: str = "rus+eng",
+    langs: list[str],
+    engine: str = "auto",
     dpi: int = 300,
     threshold: int = 10,
     password: Optional[str] = None,
@@ -262,29 +263,32 @@ def text_with_ocr_fallback(
 
     For each selected page: take the text layer (via PyMuPDF); if it is shorter
     than `threshold` chars and the page has an image, render it to an image and
-    run tesseract to recover text. Returns (per_page_text, stats) where stats
-    tracks ocr_pages, skipped (no tesseract), and blank pages.
+    run the chosen OCR engine to recover text. Returns (per_page_text, stats).
     """
     import os
-    import subprocess
     import tempfile
 
     import fitz
 
-    from ..backends import BIN
+    from .ocr import recognize_image, resolve_engine
 
+    resolved = resolve_engine(engine)
     doc = _open_fitz(path, password)
     total = len(doc)
     if selected is None:
         selected = list(range(1, total + 1))
 
-    has_tesseract = BIN.tesseract is not None
     zoom = dpi / 72.0
     matrix = fitz.Matrix(zoom, zoom)
 
     pages_text: list[str] = []
-    stats = {"ocr_pages": 0, "skipped_no_tesseract": 0, "blank_pages": 0,
-             "tesseract_errors": 0}
+    stats = {
+        "ocr_pages": 0,
+        "skipped_no_engine": 0,
+        "blank_pages": 0,
+        "ocr_errors": 0,
+        "engine": resolved,
+    }
 
     for n in selected:
         page = doc[n - 1]
@@ -293,15 +297,26 @@ def text_with_ocr_fallback(
         has_image = len(page.get_images()) > 0
 
         if len(stripped) < threshold and has_image:
-            if has_tesseract:
-                ocr_text, ok = _ocr_page_to_text(page, matrix, lang, BIN.tesseract)
+            try:
+                fd, img_name = tempfile.mkstemp(suffix=".png")
+                os.close(fd)
+                try:
+                    page.get_pixmap(matrix=matrix).save(img_name)
+                    ocr_text = recognize_image(Path(img_name), langs, resolved)
+                finally:
+                    try:
+                        os.unlink(img_name)
+                    except OSError:
+                        pass
                 pages_text.append(ocr_text)
                 stats["ocr_pages"] += 1
-                if not ok:
-                    stats["tesseract_errors"] += 1
-            else:
+                if not ocr_text.strip():
+                    stats["ocr_errors"] += 1
+            except Exception as e:
                 pages_text.append("")
-                stats["skipped_no_tesseract"] += 1
+                stats["ocr_pages"] += 1
+                stats["ocr_errors"] += 1
+                stats["last_error"] = str(e)
         elif len(stripped) < threshold:
             # No text and no image -> genuinely blank page.
             pages_text.append("")
@@ -311,41 +326,3 @@ def text_with_ocr_fallback(
 
     doc.close()
     return pages_text, stats
-
-
-def _ocr_page_to_text(page, matrix, lang: str, tesseract) -> tuple[str, bool]:
-    """Render a page to PNG and run tesseract to get plain text.
-
-    Returns (text, ok). ok=False signals tesseract itself failed (e.g. missing
-    language data) so callers can warn the user instead of silently emitting
-    empty text.
-    """
-    import os
-    import subprocess
-    import tempfile
-    from pathlib import Path
-
-    pix = page.get_pixmap(matrix=matrix)
-    fd, img_name = tempfile.mkstemp(suffix=".png")
-    os.close(fd)
-    fd2, base_name = tempfile.mkstemp()
-    os.close(fd2)
-    txt_path = Path(base_name + ".txt")
-    try:
-        pix.save(img_name)
-        result = subprocess.run(
-            [str(tesseract), img_name, base_name, "-l", lang, "txt"],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            return "", False
-        if txt_path.exists():
-            return txt_path.read_text(encoding="utf-8", errors="replace"), True
-        return "", True
-    finally:
-        for p in (img_name, str(txt_path)):
-            try:
-                os.unlink(p)
-            except OSError:
-                pass

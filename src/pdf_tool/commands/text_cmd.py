@@ -20,6 +20,7 @@ import typer
 from rich.console import Console
 
 from ..backends import BIN
+from ..core.ocr import parse_langs
 from ..core.pdf import open_reader, text_with_ocr_fallback
 from ..utils import parse_pages, safe_print
 
@@ -33,7 +34,8 @@ def text(
     pages: Optional[str] = None,
     password: Optional[str] = None,
     ocr_fallback: bool = False,
-    ocr_lang: str = "rus+eng",
+    engine: str = "auto",
+    lang: str = "en,ru",
     ocr_dpi: int = 300,
     ocr_threshold: int = 10,
 ) -> None:
@@ -47,7 +49,11 @@ def text(
         # Machine-vision path: per-page text, OCR-ing scanned pages.
         pages_text, stats = text_with_ocr_fallback(
             file, selected,
-            lang=ocr_lang, dpi=ocr_dpi, threshold=ocr_threshold, password=password,
+            langs=parse_langs(lang),
+            engine=engine,
+            dpi=ocr_dpi,
+            threshold=ocr_threshold,
+            password=password,
         )
         text_data = "\n".join(pages_text)
         _report_ocr_stats(stats)
@@ -65,23 +71,25 @@ def text(
 def _report_ocr_stats(stats: dict) -> None:
     """Print a summary of the OCR-fallback run (only if something notable)."""
     ocr = stats["ocr_pages"]
-    skipped = stats["skipped_no_tesseract"]
-    errors = stats["tesseract_errors"]
+    skipped = stats.get("skipped_no_engine", 0)
+    errors = stats.get("ocr_errors", 0)
+    engine = stats.get("engine", "?")
     if ocr:
-        safe_print(console, f"[dim]OCR applied to {ocr} scanned page(s).[/dim]")
+        safe_print(console, f"[dim]OCR ({engine}) applied to {ocr} scanned page(s).[/dim]")
     if skipped:
         safe_print(
             console,
             f"[yellow]Warning: {skipped} scanned page(s) had no recoverable text "
-            f"and tesseract is not installed. Install tesseract or run "
-            f"`pdf-tool ocr` to recognize them.[/yellow]",
+            f"and no OCR engine is available. Install easyocr (`uv pip install -e "
+            f"\".[ocr]\"`) or tesseract.[/yellow]",
         )
     if errors:
+        last = stats.get("last_error", "")
         safe_print(
             console,
-            f"[yellow]Warning: tesseract failed on {errors} page(s) — likely missing "
-            f"language data. Set TESSDATA_PREFIX to your tessdata directory or install "
-            f"the required language pack(s) (e.g. eng, rus).[/yellow]",
+            f"[yellow]Warning: {engine} produced no text on {errors} page(s)"
+            + (f" — {last}" if last else "")
+            + ". Check language data / engine install.[/yellow]",
         )
 
 

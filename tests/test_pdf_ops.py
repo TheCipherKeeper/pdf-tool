@@ -126,19 +126,17 @@ def test_text_plain_returns_empty_on_scanned(scanned_pdf):
 
 
 def test_text_ocr_fallback_recovers_scanned_text(scanned_pdf):
-    """--ocr-fallback runs tesseract on the scanned page and recovers text."""
+    """--ocr-fallback runs an OCR engine on the scanned page and recovers text."""
     import pytest
-    from pdf_tool.backends import BIN
-    if BIN.tesseract is None:
-        pytest.skip("tesseract not installed; OCR-fallback test requires it.")
-    if "eng" not in BIN.tesseract_langs():
-        pytest.skip("tesseract 'eng' language data not installed")
+    from pdf_tool.core.ocr import available_engines
+    if not available_engines():
+        pytest.skip("no OCR engine installed")
     from pdf_tool.commands.text_cmd import text
     import io
     from contextlib import redirect_stdout
     buf = io.StringIO()
     with redirect_stdout(buf):
-        text(scanned_pdf, ocr_fallback=True, ocr_lang="eng", ocr_dpi=200)
+        text(scanned_pdf, ocr_fallback=True, lang="en", ocr_dpi=200)
     out = buf.getvalue().upper()
     # OCR must recover the actual rendered words (not just the stats line).
     assert "HELLO" in out or "WORLD" in out

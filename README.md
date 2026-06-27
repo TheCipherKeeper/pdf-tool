@@ -26,7 +26,7 @@ pdf-tool version
 | `pdf-tool info FILE [--fonts]` | Show metadata, page count, image inventory, (fonts) |
 | `pdf-tool images FILE [--extract] [-o dir]` | List or extract all images (any colorspace) |
 | `pdf-tool text FILE [-l] [-p 1,3,8-10] [-o out.txt]` | Extract text (poppler, with pypdf fallback) |
-| `pdf-tool text FILE --ocr-fallback [-O] [--ocr-lang eng]` | Same, but auto-OCR scanned (image-only) pages via tesseract |
+| `pdf-tool text FILE --ocr-fallback [-O] [--lang en,ru,ja] [--engine auto]` | Same, but auto-OCR scanned (image-only) pages (easyocr or tesseract) |
 | `pdf-tool is-scanned FILE` | Detect image-only pages and report whether the PDF needs OCR |
 | `pdf-tool optimize FILE [-L] [--remove-metadata] [-o out]` | Lossless recompress via qpdf (default: overwrite input) |
 | `pdf-tool compress FILE [--preset ebook]` | Compress via ghostscript (4 presets + custom q/dpi) |
@@ -35,7 +35,7 @@ pdf-tool version
 | `pdf-tool merge a.pdf b.pdf -o out.pdf` | Concatenate PDFs with a parent bookmark per file |
 | `pdf-tool rearrange FILE -p 1,3-5,2 -o out.pdf` | Reorder/remove/duplicate pages |
 | `pdf-tool preview FILE [-p 1-3] -o dir/` | Render pages to PNG/JPEG |
-| `pdf-tool ocr FILE -o out.pdf [-l rus+eng]` | Run tesseract on a scanned PDF |
+| `pdf-tool ocr FILE -o out.pdf [-l en,ru,ja] [--engine auto]` | OCR a scanned PDF into a searchable PDF (easyocr or tesseract) |
 | `pdf-tool rotate FILE -a 90 [-p 1-3] -o out.pdf` | Rotate pages (90/180/270) |
 | `pdf-tool extract FILE -p 1-5 -o out.pdf` | Extract a page subset |
 | `pdf-tool delete FILE -p 3,7 -o out.pdf` | Remove pages |
@@ -73,7 +73,11 @@ pdf-tool text Doc.pdf -p 1,3,8-10 -o text.txt
 
 # Is this PDF a scan? Then extract text with automatic OCR on image-only pages
 pdf-tool is-scanned Scan.pdf
-pdf-tool text Scan.pdf --ocr-fallback --ocr-lang eng -o text.txt
+pdf-tool text Scan.pdf --ocr-fallback --lang en,ru -o text.txt
+
+# OCR with specific languages and engine (easyocr or tesseract)
+pdf-tool text Scan.pdf --ocr-fallback --lang en,ru,ja --engine easyocr
+pdf-tool ocr Scan.pdf -o searchable.pdf --lang en,ru,ja --engine auto
 
 # Compress to a specific size, picking best quality
 pdf-tool compress Doc.pdf --target-size 4MB
@@ -107,12 +111,22 @@ pdf-tool docx2pdf Report.docx -o Report.pdf
 |---|---|---|
 | Ghostscript | `compress`, `split` | https://www.ghostscript.com/ (also bundled with PDF24) |
 | qpdf | `optimize`, `repair` | https://qpdf.sourceforge.io/ (also bundled with PDF24) |
-| tesseract | `ocr` | https://github.com/tesseract-ocr/tesseract (also bundled with PDF24) |
+| tesseract | `ocr`, `text --ocr-fallback` (optional OCR engine) | https://github.com/tesseract-ocr/tesseract (also bundled with PDF24) |
 | poppler | `text` | https://poppler.freedesktop.org/ (pypdf fallback if missing) |
 | LibreOffice | `docx2pdf`, `pdf2docx` | https://www.libreoffice.org/ |
 | PyMuPDF, pypdf, pikepdf, python-docx, cryptography | most commands (bundled, installed via pip) | — |
+| easyocr | `ocr`, `text --ocr-fallback` (recommended OCR engine) | `uv pip install -e ".[ocr]"` |
 
 `pdf-tool doctor` shows which are detected.
+
+## OCR engines
+
+`ocr` and `text --ocr-fallback` support two interchangeable engines, selected with `--engine auto|easyocr|tesseract` (default `auto`):
+
+- **easyocr** (recommended) — pure Python (PyTorch); languages ship as model packs that download automatically on first use. No external binary, no `TESSDATA_PREFIX`. Install with `uv pip install -e ".[ocr]"`.
+- **tesseract** — external binary; fast, but needs language data on disk (PDF24 ships the binary without `*.traineddata`, so set `TESSDATA_PREFIX` or install language packs).
+
+Languages use 2-letter codes and accept multiple: `--lang en,ru,ja` (Japanese, Chinese `zh`, Korean `ko`, German `de`, French `fr`, etc.). Legacy tesseract specs like `rus+eng` are also accepted. `doctor` reports which engines and languages are available.
 
 ## Size units
 
@@ -129,6 +143,7 @@ Wherever a size is accepted (`--max-size`, `--target-size`), you can use:
 
 ```bash
 uv pip install -e ".[dev]"   # installs pytest
+uv pip install -e ".[ocr]"   # installs easyocr (optional, for OCR tests)
 python -m pytest -q
 ```
 

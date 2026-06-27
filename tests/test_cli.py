@@ -17,7 +17,7 @@ runner = CliRunner()
 def test_version():
     res = runner.invoke(app, ["version"])
     assert res.exit_code == 0
-    assert "0.2.0" in res.stdout
+    assert "0.3.0" in res.stdout
 
 
 def test_doctor_runs():
@@ -101,10 +101,18 @@ def test_is_scanned_command_scanned_pdf(scanned_pdf):
 
 def test_text_ocr_fallback_cli(scanned_pdf):
     import pytest
-    from pdf_tool.backends import BIN
-    if BIN.tesseract is None or "eng" not in BIN.tesseract_langs():
-        pytest.skip("tesseract / 'eng' language data not installed")
-    res = runner.invoke(app, ["text", str(scanned_pdf), "--ocr-fallback", "--ocr-lang", "eng", "--ocr-dpi", "200"])
+    from pdf_tool.core.ocr import available_engines
+    if not available_engines():
+        pytest.skip("no OCR engine installed")
+    res = runner.invoke(app, ["text", str(scanned_pdf), "--ocr-fallback", "--lang", "en", "--ocr-dpi", "200"])
     assert res.exit_code == 0, res.stdout
     up = res.stdout.upper()
     assert "HELLO" in up or "WORLD" in up
+
+
+def test_ocr_engine_lang_parsing():
+    from pdf_tool.core.ocr import parse_langs, tesseract_codes, easyocr_codes
+    assert parse_langs("en,ru,ja") == ["en", "ru", "ja"]
+    assert parse_langs("rus+eng") == ["ru", "en"]
+    assert tesseract_codes(["en", "ru", "ja"]) == "eng+rus+jpn"
+    assert easyocr_codes(["en", "ru", "ja"]) == ["en", "ru", "ja"]

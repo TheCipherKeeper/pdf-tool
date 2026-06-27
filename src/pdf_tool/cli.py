@@ -69,9 +69,10 @@ def text_cmd_run(
     out: Optional[str] = typer.Option(None, "--out", "-o"),
     pages: Optional[str] = typer.Option(None, "--pages", "-p"),
     password: Optional[str] = None,
-    ocr_fallback: bool = typer.Option(False, "--ocr-fallback", "-O", help="Auto-OCR scanned (image-only) pages via tesseract"),
-    ocr_lang: str = typer.Option("rus+eng", "--ocr-lang", help="Tesseract language(s) for --ocr-fallback"),
-    ocr_dpi: int = typer.Option(300, "--ocr-dpi", help="Render DPI for OCR in --ocr-fallback"),
+    ocr_fallback: bool = typer.Option(False, "--ocr-fallback", "-O", help="Auto-OCR scanned (image-only) pages"),
+    engine: str = typer.Option("auto", "--engine", help="OCR engine: auto|easyocr|tesseract"),
+    lang: str = typer.Option("en,ru", "--lang", help="OCR languages, e.g. en,ru,ja (legacy rus+eng also accepted)"),
+    ocr_dpi: int = typer.Option(300, "--ocr-dpi", help="Render DPI for OCR"),
     ocr_threshold: int = typer.Option(10, "--ocr-threshold", help="Min chars for a page to count as 'has text'"),
 ):
     """Extract text from a PDF. With --ocr-fallback, scanned pages are OCR'd."""
@@ -83,7 +84,8 @@ def text_cmd_run(
         pages=pages,
         password=password,
         ocr_fallback=ocr_fallback,
-        ocr_lang=ocr_lang,
+        engine=engine,
+        lang=lang,
         ocr_dpi=ocr_dpi,
         ocr_threshold=ocr_threshold,
     )
@@ -193,13 +195,14 @@ def preview_cmd_run(
 def ocr_cmd_run(
     file: str,
     out: str = typer.Option(..., "--out", "-o"),
-    lang: str = typer.Option("rus+eng", "--lang", "-l"),
+    lang: str = typer.Option("en,ru", "--lang", "-l", help="OCR languages, e.g. en,ru,ja"),
     dpi: int = 300,
     pages: Optional[str] = typer.Option(None, "--pages", "-p"),
+    engine: str = typer.Option("auto", "--engine", help="OCR engine: auto|easyocr|tesseract"),
 ):
-    """OCR a scanned PDF (tesseract) into a searchable PDF."""
+    """OCR a scanned PDF into a searchable PDF (easyocr or tesseract)."""
     from .commands import ocr_cmd
-    ocr_cmd.ocr(_file(file), out=_path(out), lang=lang, dpi=dpi, pages=pages)
+    ocr_cmd.ocr(_file(file), out=_path(out), lang=lang, dpi=dpi, pages=pages, engine=engine)
 
 
 @app.command("rotate")

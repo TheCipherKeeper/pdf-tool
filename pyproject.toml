@@ -1,6 +1,6 @@
 [project]
 name = "pdf-tool"
-version = "0.2.0"
+version = "0.3.0"
 description = "A Swiss-army CLI for working with PDFs and MS Word: split, merge, compress, OCR, convert, and more."
 authors = [{ name = "pdf-tool" }]
 requires-python = ">=3.10"
@@ -17,6 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+ocr = ["easyocr>=1.7"]
 
 [project.scripts]
 pdf-tool = "pdf_tool.cli:app"

@@ -59,10 +59,29 @@ class BinPaths:
                 lines.append(f"  tesseract langs: {', '.join(langs)}")
             else:
                 lines.append(
-                    "  [yellow]tesseract has NO language data — OCR (`ocr`, "
-                    "`text --ocr-fallback`) cannot recognize text. Set "
-                    "TESSDATA_PREFIX or install language packs.[/yellow]"
+                    "  [yellow]tesseract has NO language data — OCR via tesseract "
+                    "cannot recognize text. Set TESSDATA_PREFIX or install language "
+                    "packs (or use easyocr).[/yellow]"
                 )
+
+        # OCR engine availability (easyocr is the recommended Python-native path)
+        ocr_engines: list[str] = []
+        try:
+            import easyocr  # noqa: F401
+
+            ocr_engines.append("easyocr")
+        except Exception:
+            pass
+        if self.tesseract is not None:
+            ocr_engines.append("tesseract")
+        lines.append("\n[bold]OCR engines:[/bold]")
+        if ocr_engines:
+            lines.append(f"  available: {', '.join(ocr_engines)}")
+        else:
+            lines.append(
+                "  [red]none — install easyocr (`uv pip install -e \".[ocr]\"`) "
+                "or tesseract to use OCR features.[/red]"
+            )
 
         # Python library availability (some are optional / feature-gated)
         libs = _python_libs()
