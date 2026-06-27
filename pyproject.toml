@@ -1,7 +1,7 @@
 [project]
 name = "pdf-tool"
-version = "0.1.0"
-description = "A Swiss-army CLI for working with PDFs: split, merge, compress, OCR, optimize, and more."
+version = "0.2.0"
+description = "A Swiss-army CLI for working with PDFs and MS Word: split, merge, compress, OCR, convert, and more."
 authors = [{ name = "pdf-tool" }]
 requires-python = ">=3.10"
 dependencies = [
@@ -11,7 +11,12 @@ dependencies = [
     "Pillow>=10.0",
     "rich>=13.0",     # nice tables / progress bars
     "typer>=0.12",    # CLI framework
+    "python-docx>=1.1",  # MS Word .docx read/write
+    "cryptography>=3.1",  # enables pypdf AES-256 encryption
 ]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
 
 [project.scripts]
 pdf-tool = "pdf_tool.cli:app"

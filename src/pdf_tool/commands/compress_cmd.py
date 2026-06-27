@@ -8,12 +8,13 @@ from __future__ import annotations
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Optional
 
 import typer
 from rich.console import Console
 
-from ..backends import BIN, require
-from ..utils import fmt_bytes, safe_print
+from ..backends import require
+from ..utils import fmt_bytes, parse_size, safe_print
 
 console = Console()
 
@@ -35,7 +36,7 @@ QUALITY_LADDER = [
 ]
 
 
-def _gs_with(extra: list[str], src: Path, dst: Path) -> None:
+def _gs_with(extra: list[str], src: Path, dst: Path, password: Optional[str]) -> None:
     gs = require("gs")
     args = [
         str(gs),
@@ -45,32 +46,46 @@ def _gs_with(extra: list[str], src: Path, dst: Path) -> None:
         *extra,
         str(src),
     ]
-    subprocess.run(args, check=True, capture_output=True, text=True)
+    if password is not None:
+        # Insert the password flag before the input path.
+        args.insert(-1, f"-dPDFPassword={password}")
+    result = subprocess.run(args, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"ghostscript failed (exit {result.returncode}):\n{result.stderr or result.stdout}"
+        )
 
 
-def _measure(src: Path) -> int:
-    return src.stat().st_size
+def _report(before: Path, after: Path) -> None:
+    b = before.stat().st_size
+    a = after.stat().st_size
+    delta = (a - b) / b * 100 if b else 0
+    color = "green" if a < b else "yellow"
+    arrow = "down" if a < b else "up"
+    safe_print(console, f"[{color}]{arrow} {fmt_bytes(b)} -> {fmt_bytes(a)} ({delta:+.1f}%)[/{color}]  ->  {after}")
 
 
 def compress(
-    file: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True),
-    out: Path = typer.Option(None, "--out", "-o", help="Output file (default: <name>.compressed.pdf)"),
-    preset: str = typer.Option("ebook", "--preset", "-p", help="One of: prepress|printer|ebook|screen"),
-    target_size: str = typer.Option(None, "--target-size", help="Fit under N bytes, e.g. 4MB, 500KB"),
-    jpeg_q: int = typer.Option(None, "--jpeg-q", help="Custom JPEG quality (1-100)"),
-    dpi: int = typer.Option(None, "--dpi", help="Custom image downsampling DPI"),
+    file: Path,
+    out: Optional[Path] = None,
+    preset: str = "ebook",
+    target_size: Optional[str] = None,
+    jpeg_q: Optional[int] = None,
+    dpi: Optional[int] = None,
+    password: Optional[str] = None,
 ) -> None:
     """Compress a PDF with ghostscript."""
-    gs = require("gs")
+    require("gs")
     if out is None:
         out = file.with_name(file.stem + ".compressed.pdf")
 
     # If --target-size is set, sweep the quality ladder
     if target_size:
-        target = _parse_size(target_size)
+        target = parse_size(target_size)
         ladder = QUALITY_LADDER
         # If user also passed jpeg_q/dpi, restrict to those
         if jpeg_q is not None or dpi is not None:
+            console.print("[yellow]Ignoring --preset, using --jpeg-q/--dpi[/yellow]")
             ladder = [(jpeg_q or 90, dpi or 150)]
         for q, d in ladder:
             tmp = out.with_suffix(".tmp.pdf")
@@ -84,8 +99,8 @@ def compress(
                 "-dDownsampleGrayImages=true",
                 "-dDetectDuplicateImages=true",
             ]
-            _gs_with(extra, file, tmp)
-            size = _measure(tmp)
+            _gs_with(extra, file, tmp, password)
+            size = tmp.stat().st_size
             ok = size <= target
             safe_print(console, f"  q={q:3d}, dpi={d:3d} -> {fmt_bytes(size)}  {'OK' if ok else 'over'}")
             if ok:
@@ -116,24 +131,5 @@ def compress(
             raise typer.BadParameter(f"Unknown preset '{preset}'. Use: {', '.join(PRESETS)}")
         extra = [PRESETS[preset]]
 
-    _gs_with(extra, file, out)
+    _gs_with(extra, file, out, password)
     _report(file, out)
-
-
-def _report(before: Path, after: Path) -> None:
-    b = before.stat().st_size
-    a = after.stat().st_size
-    delta = (a - b) / b * 100
-    color = "green" if a < b else "yellow"
-    arrow = "down" if a < b else "up"
-    safe_print(console, f"[{color}]{arrow} {fmt_bytes(b)} -> {fmt_bytes(a)} ({delta:+.1f}%)[/{color}]  ->  {after}")
-
-
-def _parse_size(s: str) -> int:
-    s = s.strip().upper().replace(" ", "")
-    units = {"B": 1, "KB": 1024, "MB": 1024**2, "GB": 1024**3}
-    for u in ("GB", "MB", "KB", "B"):
-        if s.endswith(u):
-            num = s[: -len(u)]
-            return int(float(num) * units[u])
-    return int(s)

@@ -1,22 +1,34 @@
 """Command: pdf-tool info <file>"""
-from pathlib import Path
+from __future__ import annotations
 
-import typer
+from pathlib import Path
+from typing import Optional
+
 from rich.console import Console
 from rich.table import Table
 from pypdf import PdfReader
 
+from ..core.pdf import open_reader
 from ..utils import fmt_bytes
 
 console = Console()
 
 
+def _resolved(obj):
+    """Resolve a pypdf indirect object to its underlying value, best-effort."""
+    try:
+        return obj.get_object()
+    except Exception:
+        return obj
+
+
 def info(
-    file: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True),
-    show_fonts: bool = typer.Option(False, "--fonts", help="List embedded fonts"),
+    file: Path,
+    show_fonts: bool = False,
+    password: Optional[str] = None,
 ) -> None:
     """Show metadata and structure of a PDF."""
-    reader = PdfReader(str(file))
+    reader = open_reader(file, password)
     meta = reader.metadata or {}
     n_pages = len(reader.pages)
     enc = "yes" if reader.is_encrypted else "no"
@@ -37,17 +49,24 @@ def info(
     total_imgs = 0
     total_size = 0
     for i, page in enumerate(reader.pages, start=1):
-        xobjs = page.get("/Resources", {}).get("/XObject", {})
-        count = sum(1 for o in xobjs.values() if o.get_object().get("/Subtype") == "/Image")
+        try:
+            res = _resolved(page.get("/Resources", {}))
+            xobjs = _resolved(res.get("/XObject", {})) if res else {}
+        except Exception:
+            xobjs = {}
+        count = 0
         size = 0
-        for o in xobjs.values():
-            try:
-                o = o.get_object()
-                if o.get("/Subtype") != "/Image":
-                    continue
-                size += len(o.get_data() or b"")
-            except Exception:
-                pass
+        try:
+            for o in xobjs.values():
+                oo = _resolved(o)
+                if oo.get("/Subtype") == "/Image":
+                    count += 1
+                    try:
+                        size += len(oo.get_data() or b"")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
         total_imgs += count
         total_size += size
         if count:
@@ -58,12 +77,12 @@ def info(
     if show_fonts:
         fonts: set[str] = set()
         for page in reader.pages:
-            res = page.get("/Resources", {})
-            for f in res.get("/Font", {}).values():
-                try:
-                    fonts.add(f.get_object().get("/BaseFont", "?"))
-                except Exception:
-                    pass
+            try:
+                res = _resolved(page.get("/Resources", {}))
+                for f in _resolved(res.get("/Font", {})).values():
+                    fonts.add(_resolved(f).get("/BaseFont", "?"))
+            except Exception:
+                pass
         if fonts:
             console.print(f"\n  [bold]Fonts ({len(fonts)}):[/bold]")
             for f in sorted(fonts):

@@ -1,6 +1,7 @@
-pypdf
-pikepdf
-PyMuPDF
-Pillow
-rich
-typer
+pypdf>=4.0
+pikepdf>=8.0
+PyMuPDF>=1.23
+Pillow>=10.0
+rich>=13.0
+typer>=0.12
+python-docx>=1.1

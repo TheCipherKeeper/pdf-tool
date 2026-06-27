@@ -1,0 +1,1 @@
+"""Core operation layers: pdf and docx shared helpers."""

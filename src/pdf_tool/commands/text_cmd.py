@@ -1,51 +1,114 @@
-"""Command: pdf-tool text <file>"""
-from pathlib import Path
+"""Command: pdf-tool text <file>
+
+Extracts text. Uses poppler's pdftotext when available; falls back to pypdf.
+Page selection supports discrete ranges (1,8,11-13) — when a non-contiguous
+range is requested we render just those pages with PyMuPDF into a temp PDF
+first, so pdftotext truly sees only the selected pages.
+"""
+from __future__ import annotations
+
 import subprocess
+import tempfile
+from pathlib import Path
+from typing import Optional
 
 import typer
 from rich.console import Console
 
 from ..backends import BIN
+from ..core.pdf import open_reader
+from ..utils import parse_pages
 
 console = Console()
 
 
 def text(
-    file: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True),
-    layout: bool = typer.Option(False, "--layout", "-l", help="Preserve layout (use poppler's -layout)"),
-    out: Path = typer.Option(None, "--out", "-o", help="Write to file instead of stdout"),
-    pages: str = typer.Option(None, "--pages", "-p", help="Page range, e.g. 1-5,8,11-13"),
+    file: Path,
+    layout: bool = False,
+    out: Optional[Path] = None,
+    pages: Optional[str] = None,
+    password: Optional[str] = None,
 ) -> None:
-    """Extract text from a PDF (via poppler's pdftotext if available)."""
+    """Extract text from a PDF."""
+    # Determine selected page numbers (1-based) if a spec was given.
+    reader = open_reader(file, password)
+    total = len(reader.pages)
+    selected = parse_pages(pages, total, allow_empty=True) if pages else None
+
+    text_data = _extract(file, reader, layout, selected)
+
+    if out is not None:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(text_data.encode("utf-8"))
+        console.print(f"[green]Wrote text to {out}[/green]")
+    else:
+        console.print(text_data, end="")
+
+
+def _extract(
+    file: Path, reader, layout: bool, selected: Optional[list[int]]
+) -> str:
+    """Pick the best available extractor and return text."""
     if BIN.pdftotext is None:
-        raise RuntimeError(
-            "pdftotext (poppler) not found. Install poppler or use 'pypdf' as a fallback.\n"
-            "On Windows: download poppler from https://github.com/oschwartz10612/poppler-windows"
-        )
+        # Fallback: pypdf text extraction (no external binary needed).
+        return _pypdf_text(reader, selected)
+
+    src, is_temp = _materialize_pages(file, reader, selected)
+    try:
+        return _pdftotext(src, layout)
+    finally:
+        if is_temp:
+            src.unlink(missing_ok=True)
+
+
+def _pdftotext(src: Path, layout: bool) -> str:
     args = [str(BIN.pdftotext)]
     if layout:
         args.append("-layout")
-    if pages:
-        args += ["-f", str(_first(pages)), "-l", str(_last(pages))]
-    args.append(str(file))
-    if out:
-        args.append(str(out))
-    # If no -o, poppler writes to stdout when "-" is last arg
-    elif "-" not in args:
-        args.append("-")
+    args += [str(src), "-"]
     result = subprocess.run(args, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"pdftotext failed: {result.stderr}")
-    if out is None:
-        console.print(result.stdout, end="")
-    else:
-        console.print(f"[green]Wrote text to {out}[/green]")
+    return result.stdout
 
 
-def _first(spec: str) -> int:
-    return int(spec.split("-")[0].split(",")[0])
+def _materialize_pages(
+    file: Path, reader, selected: Optional[list[int]]
+) -> tuple[Path, bool]:
+    """Return (path, is_temp) to a PDF containing only the selected pages.
+
+    If no selection or the selection covers the whole document, we use the
+    original file directly (is_temp=False). Otherwise a subset is written to a
+    temp PDF so pdftotext truly sees only the chosen pages (is_temp=True).
+    """
+    if selected is None:
+        return file, False
+
+    total = len(reader.pages)
+    if selected == list(range(1, total + 1)):
+        return file, False
+
+    from pypdf import PdfWriter
+    import os
+
+    writer = PdfWriter()
+    for n in selected:
+        writer.add_page(reader.pages[n - 1])
+    fd, tmp_name = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)  # release the OS handle so we can reopen for writing
+    tmp = Path(tmp_name)
+    with open(tmp, "wb") as f:
+        writer.write(f)
+    return tmp, True
 
 
-def _last(spec: str) -> int:
-    # last page of last range: e.g. "1-5,8,11-13" → 13
-    return int(spec.rsplit("-", 1)[-1].rsplit(",", 1)[-1])
+def _pypdf_text(reader, selected: Optional[list[int]]) -> str:
+    """Extract text via pypdf (no poppler)."""
+    idxs = selected if selected is not None else list(range(1, len(reader.pages) + 1))
+    parts: list[str] = []
+    for n in idxs:
+        try:
+            parts.append(reader.pages[n - 1].extract_text() or "")
+        except Exception:
+            parts.append("")
+    return "\n".join(parts)

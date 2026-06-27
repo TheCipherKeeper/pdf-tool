@@ -5,16 +5,15 @@ ghostscript quality that fits.
 """
 from __future__ import annotations
 
-import shutil
-import subprocess
 from pathlib import Path
+from typing import Optional
 
 import typer
 from rich.console import Console
 from pypdf import PdfReader, PdfWriter
 
-from ..backends import BIN, require
-from ..utils import fmt_bytes
+from ..backends import require
+from ..utils import fmt_bytes, parse_size
 
 console = Console()
 
@@ -41,7 +40,13 @@ def _gs_repack(src: Path, dst: Path, jpeg_q: int, dpi: int) -> None:
         f"-sOutputFile={dst}",
         str(src),
     ]
-    subprocess.run(args, check=True, capture_output=True, text=True)
+    import subprocess
+
+    result = subprocess.run(args, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"ghostscript failed (exit {result.returncode}):\n{result.stderr or result.stdout}"
+        )
 
 
 def _write_chunks(reader, chunks, paths) -> list[int]:
@@ -59,20 +64,32 @@ def _write_chunks(reader, chunks, paths) -> list[int]:
 
 
 def split(
-    file: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True),
-    parts: int = typer.Option(..., "--parts", "-n", min=1, help="Number of output parts"),
-    max_size: str = typer.Option("4MB", "--max-size", "-m", help="Max size per part, e.g. 4MB, 500KB"),
-    out_dir: Path = typer.Option(None, "--out-dir", "-d", help="Output directory"),
-    prefix: str = typer.Option(None, "--prefix", "-p", help="Filename prefix (default: <input>_part)"),
+    file: Path,
+    parts: int,
+    max_size: str = "4MB",
+    out_dir: Optional[Path] = None,
+    prefix: Optional[str] = None,
 ) -> None:
     """Split a PDF into N parts of <= max-size with maximum quality."""
     require("gs")  # check upfront
-    target = _parse_size(max_size)
+    if parts < 1:
+        raise typer.BadParameter("--parts must be >= 1.")
+    target = parse_size(max_size)
     if out_dir is None:
         out_dir = file.parent
     out_dir.mkdir(parents=True, exist_ok=True)
     if prefix is None:
         prefix = file.stem + "_part"
+
+    # Pre-check page count so parts > pages fails cleanly up front.
+    pre_reader = PdfReader(str(file))
+    total_pages = len(pre_reader.pages)
+    if parts > total_pages:
+        raise typer.BadParameter(
+            f"Cannot split {total_pages}-page PDF into {parts} parts "
+            f"(parts must be <= page count)."
+        )
+    del pre_reader
 
     work = file.parent / f".{file.stem}.splitting.pdf"
     paths = [out_dir / f"{prefix}{i+1:02d}.pdf" for i in range(parts)]
@@ -110,15 +127,7 @@ def split(
 def _report(chunks, paths, sizes, q, dpi):
     console.print(f"\n[green]Split successful (q={q}, dpi={dpi})[/green]")
     for ch, p, sz in zip(chunks, paths, sizes):
-        console.print(f"  {p.name}: pages {ch[0]+1}-{ch[-1]+1}  {fmt_bytes(sz)}")
-
-
-def _parse_size(s: str) -> int:
-    s = s.strip().upper().replace(" ", "")
-    units = {"B": 1, "KB": 1024, "MB": 1024**2, "GB": 1024**3}
-    # Match longest suffix first
-    for u in ("GB", "MB", "KB", "B"):
-        if s.endswith(u):
-            num = s[: -len(u)]
-            return int(float(num) * units[u])
-    return int(s)
+        if ch:
+            console.print(f"  {p.name}: pages {ch[0]+1}-{ch[-1]+1}  {fmt_bytes(sz)}")
+        else:
+            console.print(f"  {p.name}: (empty)  {fmt_bytes(sz)}")

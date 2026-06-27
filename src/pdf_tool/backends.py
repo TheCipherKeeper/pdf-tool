@@ -1,4 +1,4 @@
-"""Locate external binaries (gs, qpdf, tesseract, poppler) and wrap calls.
+"""Locate external binaries (gs, qpdf, tesseract, poppler, libreoffice) and wrap calls.
 
 We don't hard-code paths; we search a set of likely install locations and
 PATH. If a binary isn't found, we raise a clear error so the user knows
@@ -21,13 +21,31 @@ class BinPaths:
     tesseract: Optional[Path] = None
     pdftotext: Optional[Path] = None
     pdfinfo: Optional[Path] = None
-    mutool: Optional[Path] = None
+    soffice: Optional[Path] = None
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        return ("gs", "qpdf", "tesseract", "pdftotext", "pdfinfo", "soffice")
 
     def report(self) -> str:
-        lines = ["External binaries:"]
-        for name in ("gs", "qpdf", "tesseract", "pdftotext", "pdfinfo", "mutool"):
+        lines = ["[bold]External binaries:[/bold]"]
+        for name in self.names:
             p = getattr(self, name)
-            lines.append(f"  {name:<11} {'OK ' if p else 'MISSING'}  {p or '(install and add to PATH)'}")
+            state = "[green]OK[/green]" if p else "[red]MISSING[/red]"
+            lines.append(f"  {name:<11} {state}  {p or '(install and add to PATH)'}")
+
+        # Python library availability (some are optional / feature-gated)
+        libs = _python_libs()
+        lines.append("\n[bold]Python libraries:[/bold]")
+        for name, ok in libs.items():
+            state = "[green]OK[/green]" if ok else "[red]MISSING[/red]"
+            lines.append(f"  {name:<11} {state}")
+
+        if self.soffice is None:
+            lines.append(
+                "\n[yellow]LibreOffice (soffice) not found — "
+                "`docx2pdf` and `pdf2docx` conversions are unavailable.[/yellow]"
+            )
         return "\n".join(lines)
 
 
@@ -51,21 +69,26 @@ _WINDOWS_CANDIDATES = {
         r"C:\Program Files\poppler\Library\bin\pdftotext.exe",
         r"C:\Program Files\poppler\bin\pdftotext.exe",
         r"C:\Program Files (x86)\poppler\bin\pdftotext.exe",
+        r"C:\Program Files\PDF24\poppler\bin\pdftotext.exe",
     ],
     "pdfinfo": [
         r"C:\Program Files\poppler\Library\bin\pdfinfo.exe",
         r"C:\Program Files\PDF24\poppler\bin\pdfinfo.exe",
         r"C:\Program Files\poppler\bin\pdfinfo.exe",
     ],
-    "mutool": [
-        r"C:\Program Files\MuTools\mutool.exe",
-        r"C:\Program Files\mupdf-tools\mutool.exe",
+    # LibreOffice: prefer soffice.com on Windows (returns after completion)
+    "soffice": [
+        r"C:\Program Files\LibreOffice\program\soffice.com",
+        r"C:\Program Files\LibreOffice\program\soffice.exe",
+        r"C:\Program Files (x86)\LibreOffice\program\soffice.com",
+        r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
     ],
 }
 
 
 def _find_windows(name: str) -> Optional[Path]:
     import glob
+
     for pattern in _WINDOWS_CANDIDATES.get(name, []):
         for match in glob.glob(pattern):
             if Path(match).exists():
@@ -76,13 +99,13 @@ def _find_windows(name: str) -> Optional[Path]:
 def find_binaries() -> BinPaths:
     paths = BinPaths()
     # First try PATH
-    for name in ("gs", "qpdf", "tesseract", "pdftotext", "pdfinfo", "mutool"):
+    for name in paths.names:
         exe = shutil.which(name)
         if exe:
             setattr(paths, name, Path(exe))
     # Fall back to Windows-specific searches
     if os.name == "nt":
-        for name in ("gs", "qpdf", "tesseract", "pdftotext", "pdfinfo", "mutool"):
+        for name in paths.names:
             if getattr(paths, name) is None:
                 found = _find_windows(name)
                 if found:
@@ -90,18 +113,27 @@ def find_binaries() -> BinPaths:
     return paths
 
 
+def _python_libs() -> dict[str, bool]:
+    """Probe for optional/required Python libraries."""
+    probes = {
+        "PyMuPDF": "fitz",
+        "pypdf": "pypdf",
+        "pikepdf": "pikepdf",
+        "Pillow": "PIL",
+        "python-docx": "docx",
+        "cryptography": "cryptography",
+    }
+    out: dict[str, bool] = {}
+    for label, mod in probes.items():
+        try:
+            __import__(mod)
+            out[label] = True
+        except Exception:
+            out[label] = False
+    return out
+
+
 BIN = find_binaries()
-
-
-def run(cmd: list[Path | str], check: bool = True, **kwargs) -> subprocess.CompletedProcess:
-    """Run a subprocess, surfacing stderr on failure."""
-    result = subprocess.run([str(c) for c in cmd], capture_output=True, text=True, **kwargs)
-    if check and result.returncode != 0:
-        raise RuntimeError(
-            f"Command failed (exit {result.returncode}): {' '.join(map(str, cmd))}\n"
-            f"STDERR:\n{result.stderr}"
-        )
-    return result
 
 
 def require(name: str) -> Path:
@@ -113,3 +145,14 @@ def require(name: str) -> Path:
             f"Current status:\n{BIN.report()}"
         )
     return p
+
+
+def run(cmd: list[Path | str], check: bool = True, **kwargs) -> subprocess.CompletedProcess:
+    """Run a subprocess, surfacing stderr on failure."""
+    result = subprocess.run([str(c) for c in cmd], capture_output=True, text=True, **kwargs)
+    if check and result.returncode != 0:
+        raise RuntimeError(
+            f"Command failed (exit {result.returncode}): {' '.join(map(str, cmd))}\n"
+            f"STDERR:\n{result.stderr}"
+        )
+    return result
