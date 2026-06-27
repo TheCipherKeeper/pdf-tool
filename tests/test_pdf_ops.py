@@ -93,3 +93,52 @@ def test_split_too_many_parts(tmp_pdf, tmp_path, capsys):
     from pdf_tool.commands.split_cmd import split
     with pytest.raises(typer.BadParameter):
         split(tmp_pdf, parts=10, max_size="4MB", out_dir=tmp_path, prefix="p")
+
+
+# ---------------------------------------------------------------------------
+# Scan detection + OCR fallback
+# ---------------------------------------------------------------------------
+
+def test_is_scanned_text_pdf_not_scanned(pdf_with_text):
+    from pdf_tool.core.pdf import is_scanned
+    r = is_scanned(pdf_with_text)
+    assert r["is_scanned"] is False
+    assert r["scanned_pages"] == []
+
+
+def test_is_scanned_scanned_pdf_detected(scanned_pdf):
+    from pdf_tool.core.pdf import is_scanned
+    r = is_scanned(scanned_pdf)
+    assert r["is_scanned"] is True
+    assert len(r["scanned_pages"]) == r["total"]
+
+
+def test_text_plain_returns_empty_on_scanned(scanned_pdf):
+    """Without --ocr-fallback, a scanned PDF yields (near) no text."""
+    from pdf_tool.commands.text_cmd import text
+    import io
+    from contextlib import redirect_stdout
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        text(scanned_pdf)
+    # The image-only page has no extractable text layer.
+    assert "OCR ME HELLO" not in buf.getvalue().upper()
+
+
+def test_text_ocr_fallback_recovers_scanned_text(scanned_pdf):
+    """--ocr-fallback runs tesseract on the scanned page and recovers text."""
+    import pytest
+    from pdf_tool.backends import BIN
+    if BIN.tesseract is None:
+        pytest.skip("tesseract not installed; OCR-fallback test requires it.")
+    if "eng" not in BIN.tesseract_langs():
+        pytest.skip("tesseract 'eng' language data not installed")
+    from pdf_tool.commands.text_cmd import text
+    import io
+    from contextlib import redirect_stdout
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        text(scanned_pdf, ocr_fallback=True, ocr_lang="eng", ocr_dpi=200)
+    out = buf.getvalue().upper()
+    # OCR must recover the actual rendered words (not just the stats line).
+    assert "HELLO" in out or "WORLD" in out

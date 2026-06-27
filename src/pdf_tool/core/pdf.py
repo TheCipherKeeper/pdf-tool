@@ -209,3 +209,143 @@ def page_count(path: Path, password: Optional[str] = None) -> int:
     """Return the number of pages in a PDF."""
     reader = open_reader(path, password)
     return len(reader.pages)
+
+
+# ---------------------------------------------------------------------------
+# Scan detection + OCR text fallback (machine vision via tesseract)
+# ---------------------------------------------------------------------------
+
+def _open_fitz(path: Path, password: Optional[str] = None):
+    """Open a PDF with PyMuPDF, authenticating if encrypted."""
+    import fitz
+
+    doc = fitz.open(str(path))
+    if doc.needs_pass:
+        if not password or not doc.authenticate(password):
+            doc.close()
+            raise RuntimeError(
+                f"Cannot open {path}: encrypted, wrong or missing password."
+            )
+    return doc
+
+
+def is_scanned(path: Path, password: Optional[str] = None, threshold: int = 10) -> dict:
+    """Detect image-only ("scanned") pages that have no real text layer.
+
+    A page is flagged as scanned when its extracted text is shorter than
+    `threshold` characters AND it contains at least one image. Returns a dict:
+    {total, scanned_pages: [1-based], is_scanned: bool (majority of pages)}.
+    """
+    doc = _open_fitz(path, password)
+    scanned: list[int] = []
+    total = len(doc)
+    for i, page in enumerate(doc, start=1):
+        text_len = len(page.get_text("text").strip())
+        has_image = len(page.get_images()) > 0
+        if text_len < threshold and has_image:
+            scanned.append(i)
+    doc.close()
+    is_scan = bool(scanned) and len(scanned) * 2 >= total  # majority of pages
+    return {"total": total, "scanned_pages": scanned, "is_scanned": is_scan}
+
+
+def text_with_ocr_fallback(
+    path: Path,
+    selected: Optional[list[int]],
+    *,
+    lang: str = "rus+eng",
+    dpi: int = 300,
+    threshold: int = 10,
+    password: Optional[str] = None,
+) -> tuple[list[str], dict]:
+    """Per-page text with automatic OCR on image-only pages.
+
+    For each selected page: take the text layer (via PyMuPDF); if it is shorter
+    than `threshold` chars and the page has an image, render it to an image and
+    run tesseract to recover text. Returns (per_page_text, stats) where stats
+    tracks ocr_pages, skipped (no tesseract), and blank pages.
+    """
+    import os
+    import subprocess
+    import tempfile
+
+    import fitz
+
+    from ..backends import BIN
+
+    doc = _open_fitz(path, password)
+    total = len(doc)
+    if selected is None:
+        selected = list(range(1, total + 1))
+
+    has_tesseract = BIN.tesseract is not None
+    zoom = dpi / 72.0
+    matrix = fitz.Matrix(zoom, zoom)
+
+    pages_text: list[str] = []
+    stats = {"ocr_pages": 0, "skipped_no_tesseract": 0, "blank_pages": 0,
+             "tesseract_errors": 0}
+
+    for n in selected:
+        page = doc[n - 1]
+        text = page.get_text("text")
+        stripped = text.strip()
+        has_image = len(page.get_images()) > 0
+
+        if len(stripped) < threshold and has_image:
+            if has_tesseract:
+                ocr_text, ok = _ocr_page_to_text(page, matrix, lang, BIN.tesseract)
+                pages_text.append(ocr_text)
+                stats["ocr_pages"] += 1
+                if not ok:
+                    stats["tesseract_errors"] += 1
+            else:
+                pages_text.append("")
+                stats["skipped_no_tesseract"] += 1
+        elif len(stripped) < threshold:
+            # No text and no image -> genuinely blank page.
+            pages_text.append("")
+            stats["blank_pages"] += 1
+        else:
+            pages_text.append(text)
+
+    doc.close()
+    return pages_text, stats
+
+
+def _ocr_page_to_text(page, matrix, lang: str, tesseract) -> tuple[str, bool]:
+    """Render a page to PNG and run tesseract to get plain text.
+
+    Returns (text, ok). ok=False signals tesseract itself failed (e.g. missing
+    language data) so callers can warn the user instead of silently emitting
+    empty text.
+    """
+    import os
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    pix = page.get_pixmap(matrix=matrix)
+    fd, img_name = tempfile.mkstemp(suffix=".png")
+    os.close(fd)
+    fd2, base_name = tempfile.mkstemp()
+    os.close(fd2)
+    txt_path = Path(base_name + ".txt")
+    try:
+        pix.save(img_name)
+        result = subprocess.run(
+            [str(tesseract), img_name, base_name, "-l", lang, "txt"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            return "", False
+        if txt_path.exists():
+            return txt_path.read_text(encoding="utf-8", errors="replace"), True
+        return "", True
+    finally:
+        for p in (img_name, str(txt_path)):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass

@@ -85,3 +85,26 @@ def test_encrypt_decrypt_cli_roundtrip(tmp_pdf, tmp_path):
     assert r.exit_code == 0, r.stdout
     r2 = runner.invoke(app, ["decrypt", str(enc), "-o", str(dec), "--password", "s3cret"])
     assert r2.exit_code == 0, r2.stdout
+
+
+def test_is_scanned_command_text_pdf(pdf_with_text):
+    res = runner.invoke(app, ["is-scanned", str(pdf_with_text)])
+    assert res.exit_code == 0, res.stdout
+    assert "has a text layer" in res.stdout
+
+
+def test_is_scanned_command_scanned_pdf(scanned_pdf):
+    res = runner.invoke(app, ["is-scanned", str(scanned_pdf)])
+    assert res.exit_code == 0, res.stdout
+    assert "SCANNED" in res.stdout
+
+
+def test_text_ocr_fallback_cli(scanned_pdf):
+    import pytest
+    from pdf_tool.backends import BIN
+    if BIN.tesseract is None or "eng" not in BIN.tesseract_langs():
+        pytest.skip("tesseract / 'eng' language data not installed")
+    res = runner.invoke(app, ["text", str(scanned_pdf), "--ocr-fallback", "--ocr-lang", "eng", "--ocr-dpi", "200"])
+    assert res.exit_code == 0, res.stdout
+    up = res.stdout.upper()
+    assert "HELLO" in up or "WORLD" in up

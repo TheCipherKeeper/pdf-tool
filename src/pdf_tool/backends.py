@@ -27,12 +27,42 @@ class BinPaths:
     def names(self) -> tuple[str, ...]:
         return ("gs", "qpdf", "tesseract", "pdftotext", "pdfinfo", "soffice")
 
+    def tesseract_langs(self) -> list[str]:
+        """Return the language codes tesseract can actually load, or []."""
+        if self.tesseract is None:
+            return []
+        try:
+            out = subprocess.run(
+                [str(self.tesseract), "--list-langs"],
+                capture_output=True, text=True,
+            ).stdout
+        except Exception:
+            return []
+        langs: list[str] = []
+        for line in out.splitlines()[1:]:  # skip the "List of available..." header
+            code = line.strip()
+            if code:
+                langs.append(code)
+        return langs
+
     def report(self) -> str:
         lines = ["[bold]External binaries:[/bold]"]
         for name in self.names:
             p = getattr(self, name)
             state = "[green]OK[/green]" if p else "[red]MISSING[/red]"
             lines.append(f"  {name:<11} {state}  {p or '(install and add to PATH)'}")
+
+        # Tesseract language data (OCR is unusable without it)
+        if self.tesseract is not None:
+            langs = self.tesseract_langs()
+            if langs:
+                lines.append(f"  tesseract langs: {', '.join(langs)}")
+            else:
+                lines.append(
+                    "  [yellow]tesseract has NO language data — OCR (`ocr`, "
+                    "`text --ocr-fallback`) cannot recognize text. Set "
+                    "TESSDATA_PREFIX or install language packs.[/yellow]"
+                )
 
         # Python library availability (some are optional / feature-gated)
         libs = _python_libs()

@@ -26,6 +26,8 @@ pdf-tool version
 | `pdf-tool info FILE [--fonts]` | Show metadata, page count, image inventory, (fonts) |
 | `pdf-tool images FILE [--extract] [-o dir]` | List or extract all images (any colorspace) |
 | `pdf-tool text FILE [-l] [-p 1,3,8-10] [-o out.txt]` | Extract text (poppler, with pypdf fallback) |
+| `pdf-tool text FILE --ocr-fallback [-O] [--ocr-lang eng]` | Same, but auto-OCR scanned (image-only) pages via tesseract |
+| `pdf-tool is-scanned FILE` | Detect image-only pages and report whether the PDF needs OCR |
 | `pdf-tool optimize FILE [-L] [--remove-metadata] [-o out]` | Lossless recompress via qpdf (default: overwrite input) |
 | `pdf-tool compress FILE [--preset ebook]` | Compress via ghostscript (4 presets + custom q/dpi) |
 | `pdf-tool compress FILE --target-size 4MB` | Auto-pick highest quality that fits a target size |
@@ -68,6 +70,10 @@ pdf-tool images Doc.pdf --extract -o ./imgs
 
 # Extract only pages 1, 3, and 8-10 (true discrete selection)
 pdf-tool text Doc.pdf -p 1,3,8-10 -o text.txt
+
+# Is this PDF a scan? Then extract text with automatic OCR on image-only pages
+pdf-tool is-scanned Scan.pdf
+pdf-tool text Scan.pdf --ocr-fallback --ocr-lang eng -o text.txt
 
 # Compress to a specific size, picking best quality
 pdf-tool compress Doc.pdf --target-size 4MB

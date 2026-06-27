@@ -69,8 +69,12 @@ def text_cmd_run(
     out: Optional[str] = typer.Option(None, "--out", "-o"),
     pages: Optional[str] = typer.Option(None, "--pages", "-p"),
     password: Optional[str] = None,
+    ocr_fallback: bool = typer.Option(False, "--ocr-fallback", "-O", help="Auto-OCR scanned (image-only) pages via tesseract"),
+    ocr_lang: str = typer.Option("rus+eng", "--ocr-lang", help="Tesseract language(s) for --ocr-fallback"),
+    ocr_dpi: int = typer.Option(300, "--ocr-dpi", help="Render DPI for OCR in --ocr-fallback"),
+    ocr_threshold: int = typer.Option(10, "--ocr-threshold", help="Min chars for a page to count as 'has text'"),
 ):
-    """Extract text from a PDF."""
+    """Extract text from a PDF. With --ocr-fallback, scanned pages are OCR'd."""
     from .commands import text_cmd
     text_cmd.text(
         _file(file),
@@ -78,6 +82,10 @@ def text_cmd_run(
         out=_path(out) if out else None,
         pages=pages,
         password=password,
+        ocr_fallback=ocr_fallback,
+        ocr_lang=ocr_lang,
+        ocr_dpi=ocr_dpi,
+        ocr_threshold=ocr_threshold,
     )
 
 
@@ -297,6 +305,17 @@ def repair_cmd_run(
     """Recover a damaged PDF."""
     from .commands import repair_cmd
     repair_cmd.repair(_file(file), out=_path(out) if out else None)
+
+
+@app.command("is-scanned")
+def is_scanned_cmd_run(
+    file: str,
+    threshold: int = typer.Option(10, "--threshold", help="Min chars for a page to count as 'has text'"),
+    password: Optional[str] = None,
+):
+    """Detect whether a PDF is image-only (scanned) and needs OCR."""
+    from .commands import is_scanned_cmd
+    is_scanned_cmd.is_scanned_cmd(_file(file), threshold=threshold, password=password)
 
 
 # ---------------------------------------------------------------------------

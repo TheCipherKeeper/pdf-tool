@@ -69,3 +69,35 @@ def docx_second(tmp_path: Path) -> Path:
     doc.add_paragraph("Appended paragraph from second doc.")
     doc.save(str(out))
     return out
+
+
+@pytest.fixture
+def scanned_pdf(tmp_path: Path) -> Path:
+    """An image-only (scanned) PDF: pages are pictures of text, no text layer.
+
+    Built by rendering a text page to a PNG and inserting it as a full-page
+    image into a fresh PDF, so get_text() returns nothing.
+    """
+    import fitz
+
+    # 1. make a text PDF
+    src_path = tmp_path / "_src.pdf"
+    src = fitz.open()
+    p = src.new_page(width=400, height=400)
+    p.insert_text((40, 200), "OCR ME HELLO WORLD", fontsize=36)
+    src.save(str(src_path))
+    src.close()
+
+    # 2. flatten: render each page to PNG, build image-only PDF
+    src = fitz.open(str(src_path))
+    out_path = tmp_path / "scanned.pdf"
+    out = fitz.open()
+    for page in src:
+        pix = page.get_pixmap(dpi=200)
+        img_bytes = pix.tobytes("png")
+        newpage = out.new_page(width=page.rect.width, height=page.rect.height)
+        newpage.insert_image(newpage.rect, stream=img_bytes)
+    out.save(str(out_path))
+    out.close()
+    src.close()
+    return out_path

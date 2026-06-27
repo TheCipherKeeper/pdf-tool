@@ -4,6 +4,10 @@ Extracts text. Uses poppler's pdftotext when available; falls back to pypdf.
 Page selection supports discrete ranges (1,8,11-13) — when a non-contiguous
 range is requested we render just those pages with PyMuPDF into a temp PDF
 first, so pdftotext truly sees only the selected pages.
+
+With --ocr-fallback, pages that have (near) no text layer but contain an
+image (i.e. scanned pages) are routed through tesseract automatically so the
+returned text includes machine-vision-recognized content.
 """
 from __future__ import annotations
 
@@ -16,8 +20,8 @@ import typer
 from rich.console import Console
 
 from ..backends import BIN
-from ..core.pdf import open_reader
-from ..utils import parse_pages
+from ..core.pdf import open_reader, text_with_ocr_fallback
+from ..utils import parse_pages, safe_print
 
 console = Console()
 
@@ -28,6 +32,10 @@ def text(
     out: Optional[Path] = None,
     pages: Optional[str] = None,
     password: Optional[str] = None,
+    ocr_fallback: bool = False,
+    ocr_lang: str = "rus+eng",
+    ocr_dpi: int = 300,
+    ocr_threshold: int = 10,
 ) -> None:
     """Extract text from a PDF."""
     # Determine selected page numbers (1-based) if a spec was given.
@@ -35,7 +43,16 @@ def text(
     total = len(reader.pages)
     selected = parse_pages(pages, total, allow_empty=True) if pages else None
 
-    text_data = _extract(file, reader, layout, selected)
+    if ocr_fallback:
+        # Machine-vision path: per-page text, OCR-ing scanned pages.
+        pages_text, stats = text_with_ocr_fallback(
+            file, selected,
+            lang=ocr_lang, dpi=ocr_dpi, threshold=ocr_threshold, password=password,
+        )
+        text_data = "\n".join(pages_text)
+        _report_ocr_stats(stats)
+    else:
+        text_data = _extract(file, reader, layout, selected)
 
     if out is not None:
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -45,10 +62,33 @@ def text(
         console.print(text_data, end="")
 
 
+def _report_ocr_stats(stats: dict) -> None:
+    """Print a summary of the OCR-fallback run (only if something notable)."""
+    ocr = stats["ocr_pages"]
+    skipped = stats["skipped_no_tesseract"]
+    errors = stats["tesseract_errors"]
+    if ocr:
+        safe_print(console, f"[dim]OCR applied to {ocr} scanned page(s).[/dim]")
+    if skipped:
+        safe_print(
+            console,
+            f"[yellow]Warning: {skipped} scanned page(s) had no recoverable text "
+            f"and tesseract is not installed. Install tesseract or run "
+            f"`pdf-tool ocr` to recognize them.[/yellow]",
+        )
+    if errors:
+        safe_print(
+            console,
+            f"[yellow]Warning: tesseract failed on {errors} page(s) — likely missing "
+            f"language data. Set TESSDATA_PREFIX to your tessdata directory or install "
+            f"the required language pack(s) (e.g. eng, rus).[/yellow]",
+        )
+
+
 def _extract(
     file: Path, reader, layout: bool, selected: Optional[list[int]]
 ) -> str:
-    """Pick the best available extractor and return text."""
+    """Pick the best available extractor and return text (no OCR)."""
     if BIN.pdftotext is None:
         # Fallback: pypdf text extraction (no external binary needed).
         return _pypdf_text(reader, selected)
